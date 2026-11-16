@@ -223,7 +223,8 @@ export function MapScreen() {
         </button>
       </div>
 
-      <div className="flex-1 mx-4 rounded-2xl overflow-hidden border border-white/8 relative min-h-0" data-demo="map-container">
+      {/* `isolate` keeps Leaflet's internal z-indexes (400–1000) contained, so overlays like the guided tour always render above the map. */}
+      <div className="flex-1 mx-4 rounded-2xl overflow-hidden border border-white/8 relative isolate min-h-0" data-demo="map-container">
         {boundary ? (
           <div ref={mapRef} className="w-full h-full" style={{ background: "#0D0D0D" }} />
         ) : (
