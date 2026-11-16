@@ -1,9 +1,13 @@
 import { CheckCircle2 } from "lucide-react";
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
-export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
+export function Card({
+  children,
+  className = "",
+  ...rest
+}: { children: ReactNode; className?: string } & HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={`bg-card rounded-2xl border border-white/8 ${className}`}>
+    <div {...rest} className={`bg-card rounded-2xl border border-white/8 ${className}`}>
       {children}
     </div>
   );

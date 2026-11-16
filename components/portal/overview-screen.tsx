@@ -19,21 +19,17 @@ const TIMELINE_ICONS = {
 
 export function OverviewScreen() {
   const { activeProject, heroImage, timeline } = useProject();
-  const { simulatedExpanded, currentStep, cursorText } = useDemo();
+  const { sim } = useDemo();
   const [requestText, setRequestText] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
   const [infoExpanded, setInfoExpanded] = useState(false);
 
-  const isExpanded =
-    infoExpanded ||
-    ((currentStep?.id === "overview-kpis" || currentStep?.id === "overview-2") && simulatedExpanded);
-  const isTyping =
-    currentStep?.id === "overview-inquiry" || currentStep?.id === "overview-4";
-  const displayRequestText = isTyping ? (cursorText || requestText) : requestText;
-  const isSimulatedSubmitted = isTyping && cursorText.length > 30;
-  const hasSubmitted = submitted || isSimulatedSubmitted;
+  // The guided tour drives these via `sim`; otherwise the screen uses its own state.
+  const isExpanded = infoExpanded || sim.infoExpanded;
+  const displayRequestText = sim.requestText ?? requestText;
+  const hasSubmitted = submitted || sim.requestSent;
 
   async function submitRequest() {
     const message = requestText.trim();
@@ -200,6 +196,7 @@ export function OverviewScreen() {
           ) : (
             <>
               <button
+                data-demo="request-send"
                 onClick={() => void submitRequest()}
                 disabled={!displayRequestText.trim() || submitting}
                 className="mt-3 w-full bg-[#FF6633] hover:bg-[#FF7A4D] disabled:opacity-30 disabled:cursor-not-allowed text-white font-bold rounded-xl py-3 text-sm transition-all duration-200 flex items-center justify-center gap-2 active:scale-[0.98]"

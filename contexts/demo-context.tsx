@@ -10,792 +10,656 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useProject } from "@/contexts/project-context";
 
-export type DemoWorkflowId =
-  | "portfolio"
-  | "overview"
-  | "map"
-  | "health"
-  | "gallery"
-  | "reports"
-  | "profile";
+/* -------------------------------------------------------------------------- */
+/*  Types                                                                     */
+/* -------------------------------------------------------------------------- */
 
-export type SidebarModuleInfo = {
-  name: string;
-  targetRole: string;
-  purposeSummary: string;
+/**
+ * Everything the tour can "do" on screen. Screens read these values and fall
+ * back to their own local state when a value is `null`/`false`, so the tour and
+ * real user input never fight over the same state.
+ */
+export type DemoSim = {
+  // Overview
+  infoExpanded: boolean;
+  requestText: string | null;
+  requestSent: boolean;
+  // Map
+  mapBoundary: boolean | null;
+  mapPinOpen: boolean;
+  // Site health
+  healthTab: "open" | "resolved" | null;
+  healthExpanded: boolean;
+  healthLightbox: boolean;
+  // Gallery
+  galleryFilter: string | null;
+  gallerySearch: string | null;
+  galleryLightbox: boolean;
+  // Reports
+  reportExpanded: boolean;
+  reportModal: boolean;
+  reportDownloaded: boolean;
+};
+
+export const DEFAULT_SIM: DemoSim = {
+  infoExpanded: false,
+  requestText: null,
+  requestSent: false,
+  mapBoundary: null,
+  mapPinOpen: false,
+  healthTab: null,
+  healthExpanded: false,
+  healthLightbox: false,
+  galleryFilter: null,
+  gallerySearch: null,
+  galleryLightbox: false,
+  reportExpanded: false,
+  reportModal: false,
+  reportDownloaded: false,
+};
+
+/** One beat in a step's timeline. Times are ms from the start of the step. */
+export type DemoAction = {
+  at: number;
+  /** Move the cursor to this element. Persists until another action changes it. */
+  target?: string;
+  /** Caption shown next to the cursor. Use "" to clear it. */
+  label?: string;
+  /** Show a click ripple at this moment. */
+  click?: boolean;
+  /** Move the spotlight. `null` returns to the step's default target. */
+  focus?: string | null;
+  /** Apply state changes to the screen. */
+  set?: Partial<DemoSim>;
+  /** Type text into a field, one character at a time. */
+  type?: { key: "requestText" | "gallerySearch"; text: string };
+  /** Switch the active project (ignored if the project doesn't exist). */
+  project?: string;
 };
 
 export type DemoStep = {
   id: string;
-  workflowId: DemoWorkflowId;
-  workflowTitle: string;
-  stepNumber: number;
-  totalStepsInWorkflow: number;
-  globalIndex: number;
+  /** Short section name shown above the title. */
+  section: string;
   title: string;
-  path: string;
-  actionLabel?: string;
+  /** What the user is looking at / can do — one or two plain sentences. */
   description: string;
-  valueTakeaway: string;
+  /** Why it matters to them — one short line. */
+  benefit: string;
+  path: string;
+  /** Element to click to reach this page. Omit if the step doesn't change page. */
+  navTarget?: string;
+  navLabel?: string;
+  /** Default spotlight target. */
+  targetSelector: string;
+  initialSim?: Partial<DemoSim>;
+  actions: DemoAction[];
   durationMs: number;
-  targetSelector?: string;
-  simulatedAction?: "click" | "type" | "expand" | "lightbox" | "switch-project" | "tab-resolved";
-  actionPayload?: string;
-  cursorTarget?: { xPercent: number; yPercent: number };
-  sidebarModule?: SidebarModuleInfo;
 };
 
-export const DEMO_WORKFLOWS: { id: DemoWorkflowId; title: string; count: number }[] = [
-  { id: "portfolio", title: "Portfolio Assets", count: 2 },
-  { id: "overview", title: "Overview", count: 4 },
-  { id: "map", title: "Project Map", count: 3 },
-  { id: "health", title: "Site Health", count: 4 },
-  { id: "gallery", title: "Photo Gallery", count: 4 },
-  { id: "reports", title: "Daily Reports", count: 3 },
-  { id: "profile", title: "Account Profile", count: 2 },
-];
+export type DemoStatus = "idle" | "running" | "complete";
+
+/* -------------------------------------------------------------------------- */
+/*  Tour script                                                               */
+/* -------------------------------------------------------------------------- */
+
+export const DEMO_START_PROJECT_ID = "proj-sunridge-phase-2";
+const ALT_PROJECT_ID = "proj-tupelo-block-a";
+
+const nav = (name: string) => `[data-demo='nav-${name}'], [data-demo='bottom-nav-${name}']`;
+
+const SEL = {
+  switcher: "[data-demo='nav-portfolio-switcher'], [data-demo='project-switcher']",
+  switcherSelect:
+    "[data-demo='nav-portfolio-switcher'] select, [data-demo='project-switcher'] select",
+  lightbox: "[data-demo='lightbox']",
+  lightboxClose: "[data-demo='lightbox-close']",
+};
 
 export const DEMO_STEPS: DemoStep[] = [
-  // ==========================================
-  // Workflow 1: Portfolio Assets (2 steps)
-  // ==========================================
   {
-    id: "portfolio-switcher-nav",
-    workflowId: "portfolio",
-    workflowTitle: "Portfolio Assets",
-    stepNumber: 1,
-    totalStepsInWorkflow: 2,
-    globalIndex: 0,
-    title: "Multi-Asset Portfolio Switcher",
-    path: "/portal/overview",
-    actionLabel: "Inspecting Portfolio Switcher",
-    targetSelector: "[data-demo='nav-portfolio-switcher']",
-    cursorTarget: { xPercent: 8, yPercent: 12 },
+    id: "switch-sites",
+    section: "Your sites",
+    title: "Switch sites in one click",
     description:
-      "Switch between contracted solar farms, transmission corridors, and substation easements without needing separate logins.",
-    valueTakeaway: "Consolidated multi-facility management under one client account.",
-    durationMs: 7000,
+      "Every site you manage lives in one account. Pick a site and the whole portal, from map to photos to reports, updates to match.",
+    benefit: "No extra logins, and no mixed-up data between sites.",
+    path: "/portal/overview",
+    navTarget: nav("overview"),
+    navLabel: "Open Overview",
+    targetSelector: SEL.switcher,
+    actions: [
+      { at: 1600, target: SEL.switcherSelect, label: "Pick a site" },
+      { at: 2800, click: true, label: "Tupelo Solar Facility", project: ALT_PROJECT_ID },
+      { at: 5600, label: "Back to Sunridge" },
+      { at: 6300, click: true, project: DEMO_START_PROJECT_ID },
+    ],
+    durationMs: 9000,
   },
   {
-    id: "portfolio-switcher-action",
-    workflowId: "portfolio",
-    workflowTitle: "Portfolio Assets",
-    stepNumber: 2,
-    totalStepsInWorkflow: 2,
-    globalIndex: 1,
-    title: "Isolated Facility Loading",
-    path: "/portal/overview",
-    actionLabel: "Loading Tupelo Solar Facility",
-    targetSelector: "[data-demo='nav-portfolio-switcher']",
-    cursorTarget: { xPercent: 10, yPercent: 13 },
-    simulatedAction: "switch-project",
-    actionPayload: "proj-tupelo-block-a",
+    id: "overview-team",
+    section: "Overview",
+    title: "Contract details and your team",
     description:
-      "Selecting an asset dynamically loads its GIS boundaries, acreage metrics, maintenance schedules, and dedicated field superintendent.",
-    valueTakeaway: "Zero risk of data mixing between independent utility off-takers.",
-    durationMs: 6500,
-  },
-
-  // ==========================================
-  // Workflow 2: Overview (4 steps)
-  // ==========================================
-  {
-    id: "overview-nav",
-    workflowId: "overview",
-    workflowTitle: "Overview",
-    stepNumber: 1,
-    totalStepsInWorkflow: 4,
-    globalIndex: 2,
-    title: "Overview Dashboard",
-    path: "/portal/overview",
-    actionLabel: "Opening Overview",
-    targetSelector: "[data-demo='nav-overview']",
-    cursorTarget: { xPercent: 8, yPercent: 19 },
-    simulatedAction: "switch-project",
-    actionPayload: "proj-everglades-solar",
-    description:
-      "The client landing page provides an immediate operational summary of active acreage, vegetation status, contacts, and maintenance schedules.",
-    valueTakeaway: "Single source of truth replacing fragmented status emails.",
-    durationMs: 6500,
-  },
-  {
-    id: "overview-kpis",
-    workflowId: "overview",
-    workflowTitle: "Overview",
-    stepNumber: 2,
-    totalStepsInWorkflow: 4,
-    globalIndex: 3,
-    title: "Contract Specifications & Directory",
+      "Open General Information to see your contract terms, plus the direct phone and email for your project manager and superintendent.",
+    benefit: "Reach the right person without opening a support ticket.",
     path: "/portal/overview",
     targetSelector: "[data-demo='general-info-toggle']",
-    cursorTarget: { xPercent: 50, yPercent: 32 },
-    simulatedAction: "expand",
-    actionLabel: "Viewing Contract Details",
-    description:
-      "Review contract specifications, PO numbers, site address, and direct phone lines for the assigned Wick'd project manager and superintendent.",
-    valueTakeaway: "Direct access to field leadership with zero support ticket friction.",
-    durationMs: 7000,
+    actions: [
+      { at: 1600, target: "[data-demo='general-info-toggle'] button", label: "Open General Information" },
+      { at: 2600, click: true, set: { infoExpanded: true } },
+    ],
+    durationMs: 9000,
   },
   {
     id: "overview-schedule",
-    workflowId: "overview",
-    workflowTitle: "Overview",
-    stepNumber: 3,
-    totalStepsInWorkflow: 4,
-    globalIndex: 4,
-    title: "Maintenance & Mowing Schedule",
+    section: "Overview",
+    title: "See what's coming up",
+    description:
+      "Past and upcoming wicking, spraying, and mowing dates in one timeline, so you know when crews will be on site.",
+    benefit: "Plan around work days, and keep vegetation clear of panels.",
     path: "/portal/overview",
     targetSelector: "[data-demo='maintenance-timeline']",
-    cursorTarget: { xPercent: 30, yPercent: 55 },
-    description:
-      "Tracks past and scheduled wicking, mowing, and herbicide cycles to ensure ground cover stays below tracker row height limits.",
-    valueTakeaway: "Transparent operational schedule preventing panel shading and power production losses.",
-    durationMs: 7000,
+    actions: [],
+    durationMs: 6500,
   },
   {
-    id: "overview-inquiry",
-    workflowId: "overview",
-    workflowTitle: "Overview",
-    stepNumber: 4,
-    totalStepsInWorkflow: 4,
-    globalIndex: 5,
-    title: "Direct Site Inquiries",
+    id: "overview-request",
+    section: "Overview",
+    title: "Ask your team anything",
+    description:
+      "Type a question or request and send it straight to your Wick'd project manager. No email chains needed.",
+    benefit: "One direct line to the people running your site.",
     path: "/portal/overview",
     targetSelector: "[data-demo='request-section']",
-    cursorTarget: { xPercent: 50, yPercent: 78 },
-    actionLabel: "Sending Request to Superintendent",
-    simulatedAction: "type",
-    actionPayload:
-      "Can we get an updated acreage count for Zone B before Friday's review?",
-    description:
-      "Submit questions or service requests directly to the project manager. Messages are routed straight to field leadership.",
-    valueTakeaway: "Fast communication channel tied directly to the active project.",
-    durationMs: 7500,
-  },
-
-  // ==========================================
-  // Workflow 3: Project Map (3 steps)
-  // ==========================================
-  {
-    id: "map-nav",
-    workflowId: "map",
-    workflowTitle: "Project Map",
-    stepNumber: 1,
-    totalStepsInWorkflow: 3,
-    globalIndex: 6,
-    title: "Satellite GIS & CAD Mapping",
-    path: "/portal/map",
-    targetSelector: "[data-demo='nav-map']",
-    cursorTarget: { xPercent: 8, yPercent: 25 },
-    actionLabel: "Opening Map Module",
-    description:
-      "Visualizes CAD/KMZ engineering layers directly on high-resolution satellite imagery—including panel blocks, inverter pads, and access roads.",
-    valueTakeaway: "Full spatial visibility across 200+ acre facilities without CAD licenses.",
-    durationMs: 7000,
+    actions: [
+      { at: 1500, target: "[data-demo='request-section'] textarea", label: "Write a request" },
+      {
+        at: 2300,
+        type: {
+          key: "requestText",
+          text: "Can we get an updated acreage count for Zone B before Friday?",
+        },
+      },
+      { at: 6000, target: "[data-demo='request-send']", label: "Send it" },
+      { at: 6800, click: true, label: "", set: { requestSent: true } },
+    ],
+    durationMs: 10000,
   },
   {
     id: "map-layers",
-    workflowId: "map",
-    workflowTitle: "Project Map",
-    stepNumber: 2,
-    totalStepsInWorkflow: 3,
-    globalIndex: 7,
-    title: "Boundary & Layer Controls",
+    section: "Project map",
+    title: "Your site on satellite imagery",
+    description:
+      "Your engineering boundary is drawn on live satellite imagery. Use the chips to show or hide the boundary and field observations.",
+    benefit: "See the whole site without needing CAD software.",
     path: "/portal/map",
-    targetSelector: "[data-demo='map-controls']",
-    cursorTarget: { xPercent: 25, yPercent: 12 },
-    actionLabel: "Toggling Map Layers",
-    simulatedAction: "click",
-    description:
-      "Toggle panel array boundaries, inverter pins, and observation clusters to focus on specific zones or inspect access routes.",
-    valueTakeaway: "Filter complex engineering data with one click.",
-    durationMs: 6500,
+    navTarget: nav("map"),
+    navLabel: "Open Map",
+    targetSelector: "[data-demo='map-container']",
+    actions: [
+      {
+        at: 2000,
+        target: "[data-demo='map-toggle-boundary']",
+        label: "Hide the boundary",
+        focus: "[data-demo='map-controls']",
+      },
+      { at: 3000, click: true, set: { mapBoundary: false } },
+      { at: 5200, label: "Show it again" },
+      { at: 5900, click: true, set: { mapBoundary: true } },
+    ],
+    durationMs: 9000,
   },
   {
-    id: "map-pins",
-    workflowId: "map",
-    workflowTitle: "Project Map",
-    stepNumber: 3,
-    totalStepsInWorkflow: 3,
-    globalIndex: 8,
-    title: "Geotagged Field Observations",
+    id: "map-pin",
+    section: "Project map",
+    title: "Tap a pin for the field notes",
+    description:
+      "Each pin is a geotagged observation. Tap one to see its status, location, and type, tied to the exact spot on site.",
+    benefit: "Every issue is linked to a real place on the map.",
     path: "/portal/map",
-    targetSelector: "[data-demo='map-observation-card']",
-    cursorTarget: { xPercent: 50, yPercent: 80 },
-    actionLabel: "Inspecting Geotagged Pin",
-    simulatedAction: "click",
-    description:
-      "Click mapped pins to inspect localized hazards, environmental notes, and photo records tied to exact latitude and longitude coordinates.",
-    valueTakeaway: "Connects field observations directly to specific inverter rows and tracker blocks.",
-    durationMs: 7000,
-  },
-
-  // ==========================================
-  // Workflow 4: Site Health (4 steps)
-  // ==========================================
-  {
-    id: "health-nav",
-    workflowId: "health",
-    workflowTitle: "Site Health",
-    stepNumber: 1,
-    totalStepsInWorkflow: 4,
-    globalIndex: 9,
-    title: "Site Health Watchlist",
-    path: "/portal/health",
-    targetSelector: "[data-demo='nav-health']",
-    cursorTarget: { xPercent: 8, yPercent: 31 },
-    actionLabel: "Opening Site Health",
-    description:
-      "Tracks site hazards such as vine growth near tracker motors, panel shading risks, and stormwater runoff across the facility.",
-    valueTakeaway: "Proactive risk detection preventing equipment damage and power losses.",
-    durationMs: 7000,
+    targetSelector: "[data-demo='map-container']",
+    actions: [
+      { at: 1600, target: "[data-demo='map-pin-first']", label: "Select a pin" },
+      { at: 2600, click: true, label: "", set: { mapPinOpen: true } },
+      { at: 3400, focus: "[data-demo='map-observation-card']" },
+    ],
+    durationMs: 8500,
   },
   {
-    id: "health-lifecycle",
-    workflowId: "health",
-    workflowTitle: "Site Health",
-    stepNumber: 2,
-    totalStepsInWorkflow: 4,
-    globalIndex: 10,
-    title: "Open vs. Resolved Triage",
+    id: "health-status",
+    section: "Site health",
+    title: "Track issues from open to resolved",
+    description:
+      "Open items still need action. Switch to Resolved to see what has been fixed and signed off by a supervisor.",
+    benefit: "A clear record that every fix was verified.",
     path: "/portal/health",
+    navTarget: nav("health"),
+    navLabel: "Open Site Health",
     targetSelector: "[data-demo='health-tabs']",
-    cursorTarget: { xPercent: 50, yPercent: 18 },
-    actionLabel: "Toggling Status Tabs",
-    simulatedAction: "tab-resolved",
-    description:
-      "Filter between open issues requiring contractor remediation and resolved items verified by field supervisors.",
-    valueTakeaway: "Closed-loop verification confirming remediated items are permanently compliant.",
-    durationMs: 6500,
+    initialSim: { healthTab: "open" },
+    actions: [
+      { at: 1800, target: "[data-demo='health-tab-resolved']", label: "See resolved items" },
+      { at: 2600, click: true, set: { healthTab: "resolved" } },
+      { at: 5600, target: "[data-demo='health-tab-open']", label: "Back to open items" },
+      { at: 6300, click: true, set: { healthTab: "open" } },
+    ],
+    durationMs: 9000,
   },
   {
-    id: "health-audit",
-    workflowId: "health",
-    workflowTitle: "Site Health",
-    stepNumber: 3,
-    totalStepsInWorkflow: 4,
-    globalIndex: 11,
-    title: "Issue Cards & Audit Trail",
+    id: "health-detail",
+    section: "Site health",
+    title: "Open an issue for the full record",
+    description:
+      "Each issue shows its severity, location, due date, field notes, and a dated history. Tap a photo to see the proof.",
+    benefit: "Audit-ready documentation for insurers and regulators.",
     path: "/portal/health",
     targetSelector: "[data-demo='observation-card-first']",
-    cursorTarget: { xPercent: 50, yPercent: 34 },
-    actionLabel: "Expanding Observation Card",
-    simulatedAction: "expand",
-    description:
-      "Expand any card to review hazard severity badges, row location tags, due dates, crew assignments, and superintendent action logs.",
-    valueTakeaway: "Transparent documentation for off-taker audits, insurers, and regulators.",
-    durationMs: 7000,
+    initialSim: { healthTab: "open" },
+    actions: [
+      {
+        at: 1500,
+        target: "[data-demo='observation-card-first'] button[aria-expanded]",
+        label: "Open the issue",
+      },
+      { at: 2400, click: true, set: { healthExpanded: true } },
+      {
+        at: 3800,
+        target: "[data-demo='observation-photo']",
+        label: "Tap a photo",
+        focus: "[data-demo='observation-photo']",
+      },
+      {
+        at: 4800,
+        click: true,
+        label: "",
+        set: { healthLightbox: true },
+        focus: SEL.lightbox,
+      },
+      { at: 8200, target: SEL.lightboxClose, label: "Close" },
+      { at: 8800, click: true, label: "", set: { healthLightbox: false }, focus: null },
+    ],
+    durationMs: 10500,
   },
   {
-    id: "health-proof",
-    workflowId: "health",
-    workflowTitle: "Site Health",
-    stepNumber: 4,
-    totalStepsInWorkflow: 4,
-    globalIndex: 12,
-    title: "Photographic Verification",
-    path: "/portal/health",
-    targetSelector: "[data-demo='observation-photo']",
-    cursorTarget: { xPercent: 20, yPercent: 50 },
-    actionLabel: "Inspecting Verification Photo",
-    simulatedAction: "lightbox",
+    id: "gallery",
+    section: "Photos",
+    title: "Find any photo in seconds",
     description:
-      "High-resolution photos provide visual proof of completed vegetation clearing and herbicide efficacy before sign-off.",
-    valueTakeaway: "Clear photographic confirmation that contracted work orders are fulfilled.",
-    durationMs: 7000,
-  },
-
-  // ==========================================
-  // Workflow 5: Photo Gallery (4 steps)
-  // ==========================================
-  {
-    id: "gallery-nav",
-    workflowId: "gallery",
-    workflowTitle: "Photo Gallery",
-    stepNumber: 1,
-    totalStepsInWorkflow: 4,
-    globalIndex: 13,
-    title: "Photo Evidence Gallery",
+      "Filter by category, search by keyword, then open a photo for full resolution, the date, and the superintendent's caption.",
+    benefit: "Inspect the site remotely, without a site visit.",
     path: "/portal/gallery",
-    targetSelector: "[data-demo='nav-photos']",
-    cursorTarget: { xPercent: 8, yPercent: 37 },
-    actionLabel: "Opening Photo Gallery",
-    description:
-      "A chronological visual archive capturing drone aerials, equipment passes, chemical applications, and site conditions.",
-    valueTakeaway: "Remote visual inspection across large-scale facilities without site visits.",
-    durationMs: 7000,
+    navTarget: nav("photos"),
+    navLabel: "Open Photos",
+    targetSelector: "[data-demo='gallery-grid']",
+    actions: [
+      {
+        at: 1600,
+        target: "[data-demo='gallery-chip-Chemical']",
+        label: "Filter by category",
+        focus: "[data-demo='gallery-chips']",
+      },
+      { at: 2500, click: true, set: { galleryFilter: "Chemical" } },
+      {
+        at: 4200,
+        target: "[data-demo='gallery-search'] input",
+        label: "Search by keyword",
+        focus: "[data-demo='gallery-search']",
+      },
+      { at: 4900, type: { key: "gallerySearch", text: "Kudzu" } },
+      {
+        at: 6400,
+        target: "[data-demo='gallery-first-photo']",
+        label: "Open the photo",
+        focus: "[data-demo='gallery-grid']",
+      },
+      { at: 7300, click: true, label: "", set: { galleryLightbox: true }, focus: SEL.lightbox },
+      { at: 10600, target: SEL.lightboxClose, label: "Close" },
+      { at: 11200, click: true, label: "", set: { galleryLightbox: false }, focus: null },
+    ],
+    durationMs: 12500,
   },
   {
-    id: "gallery-categories",
-    workflowId: "gallery",
-    workflowTitle: "Photo Gallery",
-    stepNumber: 2,
-    totalStepsInWorkflow: 4,
-    globalIndex: 14,
-    title: "Operational Category Chips",
-    path: "/portal/gallery",
-    targetSelector: "[data-demo='gallery-chips']",
-    cursorTarget: { xPercent: 25, yPercent: 22 },
-    actionLabel: "Filtering by Progress",
-    simulatedAction: "click",
-    actionPayload: "Progress",
+    id: "reports",
+    section: "Reports",
+    title: "Signed reports, ready to share",
     description:
-      "Filter photos by operational category: Progress, Equipment, Chemical Application, Safety, Wildlife, or Weather.",
-    valueTakeaway: "Locate specific photographic evidence in seconds across hundreds of site uploads.",
-    durationMs: 6500,
-  },
-  {
-    id: "gallery-search",
-    workflowId: "gallery",
-    workflowTitle: "Photo Gallery",
-    stepNumber: 3,
-    totalStepsInWorkflow: 4,
-    globalIndex: 15,
-    title: "Keyword & Species Search",
-    path: "/portal/gallery",
-    targetSelector: "[data-demo='gallery-search']",
-    cursorTarget: { xPercent: 50, yPercent: 16 },
-    actionLabel: "Searching Photos for 'Kudzu'",
-    simulatedAction: "type",
-    actionPayload: "Kudzu",
-    description:
-      "Instant search finds matching plant species, equipment types, or project block captions in real time.",
-    valueTakeaway: "Instant documentation lookup for targeted site zones.",
-    durationMs: 7000,
-  },
-  {
-    id: "gallery-lightbox",
-    workflowId: "gallery",
-    workflowTitle: "Photo Gallery",
-    stepNumber: 4,
-    totalStepsInWorkflow: 4,
-    globalIndex: 16,
-    title: "Full-Resolution Inspection",
-    path: "/portal/gallery",
-    targetSelector: "[data-demo='gallery-first-photo']",
-    cursorTarget: { xPercent: 25, yPercent: 38 },
-    actionLabel: "Viewing High-Res Image Detail",
-    simulatedAction: "lightbox",
-    description:
-      "Click any photo to open full-resolution imagery with timestamp metadata, GPS coordinates, and superintendent field captions.",
-    valueTakeaway: "Zoom into tracker row bases and cable trays on desktop or mobile.",
-    durationMs: 7000,
-  },
-
-  // ==========================================
-  // Workflow 6: Daily Reports (3 steps)
-  // ==========================================
-  {
-    id: "reports-nav",
-    workflowId: "reports",
-    workflowTitle: "Daily Reports",
-    stepNumber: 1,
-    totalStepsInWorkflow: 3,
-    globalIndex: 17,
-    title: "Certified Daily Field Logs",
+      "Each daily log records weather, crew, equipment, and a digital signature. Open the PDF and download it for lenders or utility partners.",
+    benefit: "Audit-ready records in a single click.",
     path: "/portal/reports",
-    targetSelector: "[data-demo='nav-reports']",
-    cursorTarget: { xPercent: 8, yPercent: 43 },
-    actionLabel: "Opening Daily Reports",
-    description:
-      "Access certified daily field logs submitted by licensed project superintendents, recording daily work completed and site conditions.",
-    valueTakeaway: "Verified digital compliance records replacing manual paper logs.",
-    durationMs: 7000,
-  },
-  {
-    id: "reports-cards",
-    workflowId: "reports",
-    workflowTitle: "Daily Reports",
-    stepNumber: 2,
-    totalStepsInWorkflow: 3,
-    globalIndex: 18,
-    title: "Daily Log Columns & Metrics",
-    path: "/portal/reports",
+    navTarget: nav("reports"),
+    navLabel: "Open Reports",
     targetSelector: "[data-demo='reports-first-card']",
-    cursorTarget: { xPercent: 50, yPercent: 30 },
-    actionLabel: "Expanding Report Details",
-    simulatedAction: "expand",
-    description:
-      "Each log row displays cleared acreage (+28 ac), weather and wind drift conditions, logged delays, crew headcounts, and verified digital signatures.",
-    valueTakeaway: "Documented weather and wind velocity records for drift compliance.",
-    durationMs: 7500,
-  },
-  {
-    id: "reports-export",
-    workflowId: "reports",
-    workflowTitle: "Daily Reports",
-    stepNumber: 3,
-    totalStepsInWorkflow: 3,
-    globalIndex: 19,
-    title: "Official PDF Compliance Export",
-    path: "/portal/reports",
-    targetSelector: "[data-demo='report-download-btn']",
-    cursorTarget: { xPercent: 50, yPercent: 82 },
-    actionLabel: "Downloading Signed PDF",
-    simulatedAction: "click",
-    description:
-      "Download official signed PDF reports ready for distribution to utility off-takers, lenders, and asset management reviews.",
-    valueTakeaway: "Generates audit-ready compliance packages in a single click.",
-    durationMs: 7000,
-  },
-
-  // ==========================================
-  // Workflow 7: Account Profile (2 steps)
-  // ==========================================
-  {
-    id: "profile-nav",
-    workflowId: "profile",
-    workflowTitle: "Account Profile",
-    stepNumber: 1,
-    totalStepsInWorkflow: 2,
-    globalIndex: 20,
-    title: "Account & Access Profile",
-    path: "/portal/profile",
-    targetSelector: "[data-demo='nav-profile']",
-    cursorTarget: { xPercent: 8, yPercent: 92 },
-    actionLabel: "Opening Profile",
-    description:
-      "View client organization identity, authorized stakeholder access, and assigned facility permissions.",
-    valueTakeaway: "Secure tenant access ensuring proprietary site data remains confidential.",
-    durationMs: 6500,
-  },
-  {
-    id: "profile-guardrails",
-    workflowId: "profile",
-    workflowTitle: "Account Profile",
-    stepNumber: 2,
-    totalStepsInWorkflow: 2,
-    globalIndex: 21,
-    title: "Guided Tour Complete",
-    path: "/portal/profile",
-    targetSelector: "[data-demo='profile-card']",
-    cursorTarget: { xPercent: 50, yPercent: 30 },
-    description:
-      "You have completed the walkthrough! You can now freely explore the client portal, toggle GIS layers, test photo filters, and view reports.",
-    valueTakeaway: "Full hands-on access to test every feature of the client portal.",
-    durationMs: 8000,
+    actions: [
+      { at: 1600, target: "[data-demo='report-expand-btn']", label: "Expand the report" },
+      { at: 2400, click: true, set: { reportExpanded: true } },
+      { at: 5000, target: "[data-demo='report-view-btn']", label: "View the PDF" },
+      {
+        at: 5800,
+        click: true,
+        label: "",
+        set: { reportModal: true },
+        focus: "[data-demo='report-modal']",
+      },
+      { at: 8400, target: "[data-demo='report-download-btn']", label: "Download it" },
+      { at: 9200, click: true, label: "", set: { reportDownloaded: true } },
+    ],
+    durationMs: 12000,
   },
 ];
 
+export const TOTAL_STEPS = DEMO_STEPS.length;
+export const TOUR_MINUTES = Math.max(
+  1,
+  Math.round(DEMO_STEPS.reduce((sum, s) => sum + s.durationMs, 0) / 60000)
+);
+
+/* -------------------------------------------------------------------------- */
+/*  Timeline evaluation (pure)                                                */
+/* -------------------------------------------------------------------------- */
+
+const TYPE_MS_PER_CHAR = 55;
+const CLICK_FLASH_MS = 450;
+const NAV_CLICK_MS = 900;
+const NAV_PUSH_MS = 1050;
+const TICK_MS = 60;
+/** A throttled or backgrounded tab can deliver ticks late; never let one skip more than this. */
+const MAX_TICK_DELTA_MS = 200;
+
+type CursorState = {
+  selector: string | null;
+  label: string;
+  clicking: boolean;
+};
+
+const HIDDEN_CURSOR: CursorState = { selector: null, label: "", clicking: false };
+
+function deriveStepState(step: DemoStep, elapsed: number) {
+  const sim: DemoSim = { ...DEFAULT_SIM, ...step.initialSim };
+  let target: string | null = null;
+  let label = "";
+  let clicking = false;
+  let focus = step.targetSelector;
+
+  for (const action of step.actions) {
+    if (action.at > elapsed) break;
+    if (action.target !== undefined) target = action.target;
+    if (action.label !== undefined) label = action.label;
+    // A click completes the thought, so its caption shouldn't linger afterwards.
+    else if (action.click) label = "";
+    if (action.focus !== undefined) focus = action.focus ?? step.targetSelector;
+    if (action.set) Object.assign(sim, action.set);
+    if (action.type) {
+      const chars = Math.min(
+        action.type.text.length,
+        Math.floor((elapsed - action.at) / TYPE_MS_PER_CHAR) + 1
+      );
+      sim[action.type.key] = action.type.text.slice(0, chars);
+    }
+    if (action.click && elapsed - action.at < CLICK_FLASH_MS) clicking = true;
+  }
+
+  return { sim, cursor: { selector: target, label, clicking }, focus };
+}
+
+function shallowEqual<T extends object>(a: T, b: T) {
+  const keys = Object.keys(a) as (keyof T)[];
+  return keys.every((k) => a[k] === b[k]);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Context                                                                   */
+/* -------------------------------------------------------------------------- */
+
 type DemoContextValue = {
-  isDemoActive: boolean;
+  status: DemoStatus;
   isWalkthroughRunning: boolean;
+  isTourComplete: boolean;
   isPaused: boolean;
-  currentStepIndex: number;
-  currentStep: DemoStep;
-  progressPercent: number;
-  playbackSpeed: number;
-  cursorPos: { x: number; y: number; visible: boolean; clicking: boolean };
-  cursorText: string;
-  simulatedExpanded: boolean;
-  simulatedTab: "open" | "resolved";
-  simulatedSearch: string;
-  simulatedModalOpen: boolean;
+  stepIndex: number;
+  step: DemoStep;
+  totalSteps: number;
+  /** Simulated screen state. Equals `DEFAULT_SIM` whenever the tour is idle. */
+  sim: DemoSim;
+  cursor: CursorState;
+  spotlightSelector: string | null;
   startWalkthrough: (fromBeginning?: boolean) => void;
   pauseWalkthrough: () => void;
   resumeWalkthrough: () => void;
   nextStep: () => void;
   prevStep: () => void;
   goToStep: (index: number) => void;
-  jumpToWorkflow: (workflowId: DemoWorkflowId) => void;
   replayCurrentStep: () => void;
   exitWalkthrough: () => void;
-  setSpeed: (speed: number) => void;
 };
 
 const DemoContext = createContext<DemoContextValue | null>(null);
+/** Progress (0–1) through the current step. Kept separate so only the card re-renders on every tick. */
+const DemoProgressContext = createContext(0);
 
 export function DemoProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const projectCtx = useProject();
 
-  const [isWalkthroughRunning, setIsWalkthroughRunning] = useState(false);
+  const [status, setStatus] = useState<DemoStatus>("idle");
   const [isPaused, setIsPaused] = useState(false);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [progressPercent, setProgressPercent] = useState(0);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [replayToken, setReplayToken] = useState(0);
+  const [sim, setSim] = useState<DemoSim>(DEFAULT_SIM);
+  const [cursor, setCursor] = useState<CursorState>(HIDDEN_CURSOR);
+  const [spotlightSelector, setSpotlightSelector] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
 
-  // Animated cursor state
-  const [cursorPos, setCursorPos] = useState<{
-    x: number;
-    y: number;
-    visible: boolean;
-    clicking: boolean;
-  }>({
-    x: 50,
-    y: 50,
-    visible: false,
-    clicking: false,
-  });
-  const [cursorText, setCursorText] = useState("");
+  // Latest values for the ticking loop, so it never has to restart for them.
+  const pathnameRef = useRef(pathname);
+  const routerRef = useRef(router);
+  const projectRef = useRef(projectCtx);
+  pathnameRef.current = pathname;
+  routerRef.current = router;
+  projectRef.current = projectCtx;
 
-  // Simulated screen interactions
-  const [simulatedExpanded, setSimulatedExpanded] = useState(false);
-  const [simulatedTab, setSimulatedTab] = useState<"open" | "resolved">("open");
-  const [simulatedSearch, setSimulatedSearch] = useState("");
-  const [simulatedModalOpen, setSimulatedModalOpen] = useState(false);
+  const elapsedRef = useRef(0);
+  const navElapsedRef = useRef(0);
+  const lastTickAtRef = useRef(0);
+  const pushedRef = useRef(false);
+  const firedProjectsRef = useRef<Set<number>>(new Set());
 
-  const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const progressTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const stepStartTimeRef = useRef<number>(0);
+  const step = DEMO_STEPS[stepIndex] ?? DEMO_STEPS[0]!;
+  const isRunning = status === "running";
 
-  const currentStep = DEMO_STEPS[currentStepIndex] ?? DEMO_STEPS[0]!;
+  const switchProject = useCallback((projectId: string) => {
+    const { projects, activeProject, setActiveProjectId } = projectRef.current;
+    if (!projects.some((p) => p.id === projectId)) return;
+    if (activeProject?.id === projectId) return;
+    setActiveProjectId(projectId);
+  }, []);
 
-  // Handle navigation and simulated actions when step changes
+  const clearStage = useCallback(() => {
+    setSim(DEFAULT_SIM);
+    setCursor(HIDDEN_CURSOR);
+    setSpotlightSelector(null);
+    setProgress(0);
+  }, []);
+
+  // 1) Reset the clock whenever a step (re)starts.
   useEffect(() => {
-    if (!isWalkthroughRunning) {
-      setCursorPos((prev) => ({ ...prev, visible: false }));
-      return;
-    }
+    if (!isRunning) return;
+    elapsedRef.current = 0;
+    navElapsedRef.current = 0;
+    pushedRef.current = false;
+    firedProjectsRef.current = new Set();
+    setProgress(0);
+    setSim({ ...DEFAULT_SIM, ...step.initialSim });
+    setCursor(HIDDEN_CURSOR);
+    setSpotlightSelector(step.targetSelector);
+    // Every step is written against the first site; make sure we start there.
+    switchProject(DEMO_START_PROJECT_ID);
+  }, [isRunning, stepIndex, replayToken, step, switchProject]);
 
-    const step = currentStep;
+  // 2) Single clock that drives navigation, the cursor, simulated state and auto-advance.
+  useEffect(() => {
+    if (!isRunning || isPaused) return;
 
-    // Route to correct page if needed
-    if (pathname !== step.path) {
-      router.push(step.path);
-    }
+    lastTickAtRef.current = performance.now();
 
-    // Position cursor with dynamic DOM target precision
-    const updateCursorPosition = () => {
-      if (typeof window !== "undefined" && step.targetSelector) {
-        const el = document.querySelector(step.targetSelector);
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          const xPercent = Math.min(95, Math.max(3, ((rect.left + rect.width / 2) / window.innerWidth) * 100));
-          const yPercent = Math.min(95, Math.max(3, ((rect.top + rect.height / 2) / window.innerHeight) * 100));
-          setCursorPos({
-            x: Math.round(xPercent),
-            y: Math.round(yPercent),
-            visible: true,
-            clicking: false,
-          });
-          return;
+    const timer = setInterval(() => {
+      // Real time since the last tick (so timing holds up even if the browser throttles us).
+      const now = performance.now();
+      const dt = Math.min(MAX_TICK_DELTA_MS, Math.max(0, now - lastTickAtRef.current));
+      lastTickAtRef.current = now;
+
+      // Phase A — get to the right page first, by "clicking" the nav item.
+      if (pathnameRef.current !== step.path) {
+        navElapsedRef.current += dt;
+        const navMs = navElapsedRef.current;
+        const next: CursorState = {
+          selector: step.navTarget ?? null,
+          label: step.navLabel ?? "",
+          clicking: navMs >= NAV_CLICK_MS && navMs < NAV_CLICK_MS + CLICK_FLASH_MS,
+        };
+        setCursor((prev) => (shallowEqual(prev, next) ? prev : next));
+        setSpotlightSelector(step.navTarget ?? step.targetSelector);
+
+        const pushAt = step.navTarget ? NAV_PUSH_MS : 0;
+        if (navMs >= pushAt && !pushedRef.current) {
+          pushedRef.current = true;
+          routerRef.current.push(step.path);
+        }
+        return;
+      }
+
+      // Phase B — play the step's timeline.
+      elapsedRef.current += dt;
+      const elapsed = elapsedRef.current;
+
+      step.actions.forEach((action, i) => {
+        if (action.project && action.at <= elapsed && !firedProjectsRef.current.has(i)) {
+          firedProjectsRef.current.add(i);
+          switchProject(action.project);
+        }
+      });
+
+      const derived = deriveStepState(step, elapsed);
+      setSim((prev) => (shallowEqual(prev, derived.sim) ? prev : derived.sim));
+      setCursor((prev) => (shallowEqual(prev, derived.cursor) ? prev : derived.cursor));
+      setSpotlightSelector(derived.focus);
+      setProgress(Math.min(1, elapsed / step.durationMs));
+
+      if (elapsed >= step.durationMs) {
+        if (stepIndex < TOTAL_STEPS - 1) {
+          setStepIndex(stepIndex + 1);
+        } else {
+          setStatus("complete");
         }
       }
-      if (step.cursorTarget) {
-        setCursorPos({
-          x: step.cursorTarget.xPercent,
-          y: step.cursorTarget.yPercent,
-          visible: true,
-          clicking: false,
-        });
-      }
-    };
+    }, TICK_MS);
 
-    updateCursorPosition();
-    const t1 = setTimeout(updateCursorPosition, 100);
-    const t2 = setTimeout(updateCursorPosition, 300);
-    const t3 = setTimeout(updateCursorPosition, 600);
+    return () => clearInterval(timer);
+  }, [isRunning, isPaused, step, stepIndex, replayToken, switchProject]);
 
-    // Reset step simulated states
-    setSimulatedExpanded(false);
-    setSimulatedTab("open");
-    setSimulatedSearch("");
-    setSimulatedModalOpen(false);
-    setCursorText("");
-
-    // Schedule simulated action halfway through the step duration
-    const actionDelay = (step.durationMs * 0.4) / playbackSpeed;
-    const actionTimer = setTimeout(() => {
-      // Trigger click animation
-      setCursorPos((prev) => ({ ...prev, clicking: true }));
-      setTimeout(() => setCursorPos((prev) => ({ ...prev, clicking: false })), 400);
-
-      // Perform simulated action
-      if (step.simulatedAction === "expand") {
-        setSimulatedExpanded(true);
-      } else if (step.simulatedAction === "tab-resolved") {
-        setSimulatedTab("resolved");
-        setTimeout(() => setSimulatedTab("open"), 3000);
-      } else if (step.simulatedAction === "type") {
-        const text = step.actionPayload || "Kudzu";
-        let cur = "";
-        const interval = setInterval(() => {
-          if (cur.length < text.length) {
-            cur = text.slice(0, cur.length + 1);
-            setCursorText(cur);
-            setSimulatedSearch(cur);
-          } else {
-            clearInterval(interval);
-          }
-        }, 60);
-      } else if (step.simulatedAction === "lightbox") {
-        setSimulatedModalOpen(true);
-        setTimeout(() => setSimulatedModalOpen(false), 2500);
-      } else if (step.simulatedAction === "switch-project" && step.actionPayload) {
-        projectCtx?.setActiveProjectId(step.actionPayload);
-      }
-    }, actionDelay);
-
-    return () => {
-      clearTimeout(actionTimer);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
-  }, [currentStepIndex, isWalkthroughRunning, playbackSpeed, pathname, router, projectCtx, currentStep]);
-
-  // Step countdown and auto-advance
-  useEffect(() => {
-    if (!isWalkthroughRunning || isPaused) {
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-      return;
-    }
-
-    const duration = currentStep.durationMs / playbackSpeed;
-    stepStartTimeRef.current = Date.now();
-    setProgressPercent(0);
-
-    // Update progress bar smoothly
-    progressTimerRef.current = setInterval(() => {
-      const elapsed = Date.now() - stepStartTimeRef.current;
-      const pct = Math.min(100, Math.round((elapsed / duration) * 100));
-      setProgressPercent(pct);
-    }, 100);
-
-    // Advance to next step when duration expires
-    stepTimerRef.current = setTimeout(() => {
-      if (currentStepIndex < DEMO_STEPS.length - 1) {
-        setCurrentStepIndex((prev) => prev + 1);
-      } else {
-        // Tour completed
-        setIsWalkthroughRunning(false);
-        setIsPaused(false);
-      }
-    }, duration);
-
-    return () => {
-      if (stepTimerRef.current) clearTimeout(stepTimerRef.current);
-      if (progressTimerRef.current) clearInterval(progressTimerRef.current);
-    };
-  }, [currentStepIndex, isWalkthroughRunning, isPaused, playbackSpeed, currentStep]);
+  /* ----------------------------- Public actions ---------------------------- */
 
   const startWalkthrough = useCallback((fromBeginning = true) => {
-    if (fromBeginning) {
-      setCurrentStepIndex(0);
-    }
-    setIsWalkthroughRunning(true);
+    if (fromBeginning) setStepIndex(0);
+    setReplayToken((t) => t + 1);
     setIsPaused(false);
-    setProgressPercent(0);
+    setStatus("running");
   }, []);
 
-  const pauseWalkthrough = useCallback(() => {
-    setIsPaused(true);
-  }, []);
+  const pauseWalkthrough = useCallback(() => setIsPaused(true), []);
+  const resumeWalkthrough = useCallback(() => setIsPaused(false), []);
 
-  const resumeWalkthrough = useCallback(() => {
+  const goToStep = useCallback((index: number) => {
+    if (index < 0 || index >= TOTAL_STEPS) return;
+    setStepIndex(index);
+    setReplayToken((t) => t + 1);
     setIsPaused(false);
+    setStatus("running");
   }, []);
 
   const nextStep = useCallback(() => {
-    if (currentStepIndex < DEMO_STEPS.length - 1) {
-      setCurrentStepIndex((prev) => prev + 1);
-      setProgressPercent(0);
+    if (stepIndex < TOTAL_STEPS - 1) {
+      goToStep(stepIndex + 1);
     } else {
-      setIsWalkthroughRunning(false);
+      clearStage();
+      setStatus("complete");
     }
-  }, [currentStepIndex]);
+  }, [stepIndex, goToStep, clearStage]);
 
   const prevStep = useCallback(() => {
-    if (currentStepIndex > 0) {
-      setCurrentStepIndex((prev) => prev - 1);
-      setProgressPercent(0);
+    // From the finish screen, "back" returns to the last step.
+    if (status === "complete") {
+      goToStep(TOTAL_STEPS - 1);
+    } else if (stepIndex > 0) {
+      goToStep(stepIndex - 1);
     }
-  }, [currentStepIndex]);
-
-  const goToStep = useCallback((index: number) => {
-    if (index >= 0 && index < DEMO_STEPS.length) {
-      setCurrentStepIndex(index);
-      setProgressPercent(0);
-      setIsWalkthroughRunning(true);
-      setIsPaused(false);
-    }
-  }, []);
-
-  const jumpToWorkflow = useCallback((workflowId: DemoWorkflowId) => {
-    const firstStepIndex = DEMO_STEPS.findIndex((s) => s.workflowId === workflowId);
-    if (firstStepIndex !== -1) {
-      setCurrentStepIndex(firstStepIndex);
-      setProgressPercent(0);
-      setIsWalkthroughRunning(true);
-      setIsPaused(false);
-    }
-  }, []);
+  }, [status, stepIndex, goToStep]);
 
   const replayCurrentStep = useCallback(() => {
-    setProgressPercent(0);
-    setCurrentStepIndex((prev) => prev); // re-trigger
+    setReplayToken((t) => t + 1);
+    setIsPaused(false);
   }, []);
 
   const exitWalkthrough = useCallback(() => {
-    setIsWalkthroughRunning(false);
+    setStatus("idle");
     setIsPaused(false);
-    setProgressPercent(0);
-    setCursorPos((prev) => ({ ...prev, visible: false }));
-  }, []);
+    clearStage();
+  }, [clearStage]);
 
-  const setSpeed = useCallback((speed: number) => {
-    setPlaybackSpeed(speed);
-  }, []);
+  // Leave the stage clean when the tour ends or is dismissed.
+  useEffect(() => {
+    if (status !== "running") clearStage();
+  }, [status, clearStage]);
 
-  const value = useMemo(
+  const value = useMemo<DemoContextValue>(
     () => ({
-      isDemoActive: true,
-      isWalkthroughRunning,
+      status,
+      isWalkthroughRunning: status === "running",
+      isTourComplete: status === "complete",
       isPaused,
-      currentStepIndex,
-      currentStep,
-      progressPercent,
-      playbackSpeed,
-      cursorPos,
-      cursorText,
-      simulatedExpanded,
-      simulatedTab,
-      simulatedSearch,
-      simulatedModalOpen,
+      stepIndex,
+      step,
+      totalSteps: TOTAL_STEPS,
+      sim,
+      cursor,
+      spotlightSelector,
       startWalkthrough,
       pauseWalkthrough,
       resumeWalkthrough,
       nextStep,
       prevStep,
       goToStep,
-      jumpToWorkflow,
       replayCurrentStep,
       exitWalkthrough,
-      setSpeed,
     }),
     [
-      isWalkthroughRunning,
+      status,
       isPaused,
-      currentStepIndex,
-      currentStep,
-      progressPercent,
-      playbackSpeed,
-      cursorPos,
-      cursorText,
-      simulatedExpanded,
-      simulatedTab,
-      simulatedSearch,
-      simulatedModalOpen,
+      stepIndex,
+      step,
+      sim,
+      cursor,
+      spotlightSelector,
       startWalkthrough,
       pauseWalkthrough,
       resumeWalkthrough,
       nextStep,
       prevStep,
       goToStep,
-      jumpToWorkflow,
       replayCurrentStep,
       exitWalkthrough,
-      setSpeed,
     ]
   );
 
-  return <DemoContext.Provider value={value}>{children}</DemoContext.Provider>;
+  return (
+    <DemoContext.Provider value={value}>
+      <DemoProgressContext.Provider value={progress}>{children}</DemoProgressContext.Provider>
+    </DemoContext.Provider>
+  );
 }
 
 export function useDemo() {
@@ -804,4 +668,8 @@ export function useDemo() {
     throw new Error("useDemo must be used within DemoProvider");
   }
   return ctx;
+}
+
+export function useDemoProgress() {
+  return useContext(DemoProgressContext);
 }

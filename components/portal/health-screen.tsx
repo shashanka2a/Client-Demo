@@ -225,12 +225,13 @@ function groupByType(items: PortalObservation[]) {
 
 export function HealthScreen() {
   const { observations, activeProject } = useProject();
-  const { currentStep, simulatedExpanded, simulatedTab, simulatedModalOpen } = useDemo();
+  const { sim } = useDemo();
   const [activeTab, setActiveTab] = useState<HealthTab>("open");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<PortalObservationPhoto | null>(null);
 
-  const effectiveTab = currentStep?.id === "health-2" ? simulatedTab : activeTab;
+  // The guided tour can drive the tab, an expanded card and the photo viewer.
+  const effectiveTab = sim.healthTab ?? activeTab;
 
   const openItems = useMemo(
     () => observations.filter((o) => o.status.toLowerCase() !== "resolved"),
@@ -244,18 +245,14 @@ export function HealthScreen() {
   const activeItems = effectiveTab === "open" ? openItems : resolvedItems;
   const typeGroups = useMemo(() => groupByType(activeItems), [activeItems]);
 
+  // Cards are grouped by type, so "first" means the first card actually shown on screen.
+  const firstShown = typeGroups[0]?.[1][0];
+
   const effectiveExpandedId =
-    (currentStep?.id === "health-audit" ||
-      currentStep?.id === "health-proof" ||
-      currentStep?.id === "health-3") &&
-    (simulatedExpanded || currentStep?.id === "health-proof")
-      ? openItems[0]?.id ?? "obs-1"
-      : expandedId;
+    sim.healthExpanded && firstShown ? firstShown.id : expandedId;
 
   const effectiveLightbox =
-    (currentStep?.id === "health-proof" || currentStep?.id === "health-4") && simulatedModalOpen
-      ? openItems[0]?.photos[0] ?? null
-      : lightbox;
+    sim.healthLightbox && firstShown?.photos[0] ? firstShown.photos[0] : lightbox;
 
   if (!activeProject) return null;
 
@@ -283,7 +280,7 @@ export function HealthScreen() {
             <button
               key={tab.key}
               type="button"
-              data-demo={tab.key === "resolved" ? "health-tab-resolved" : undefined}
+              data-demo={`health-tab-${tab.key}`}
               onClick={() => {
                 setActiveTab(tab.key);
                 setExpandedId(null);
@@ -315,12 +312,12 @@ export function HealthScreen() {
             <div className="flex items-center gap-2.5 mb-3">
               <span
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  activeTab === "open" ? "bg-[#FF6633]" : "bg-[#34C759]"
+                  effectiveTab === "open" ? "bg-[#FF6633]" : "bg-[#34C759]"
                 }`}
               />
               <span
                 className={`text-xs font-bold uppercase tracking-widest ${
-                  activeTab === "open" ? "text-[#FF6633]" : "text-[#34C759]"
+                  effectiveTab === "open" ? "text-[#FF6633]" : "text-[#34C759]"
                 }`}
               >
                 {type}
@@ -330,7 +327,7 @@ export function HealthScreen() {
 
             <div
               className={`rounded-2xl border border-white/8 bg-card divide-y divide-white/5 overflow-hidden ${
-                activeTab === "resolved" ? "opacity-85" : ""
+                effectiveTab === "resolved" ? "opacity-85" : ""
               }`}
             >
               {items.map((item, index) => (
@@ -363,12 +360,13 @@ export function HealthScreen() {
         >
           <button
             type="button"
+            data-demo="lightbox-close"
             className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors z-10"
             onClick={() => setLightbox(null)}
           >
             <X size={18} />
           </button>
-          <div className="max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="max-w-lg w-full" data-demo="lightbox" onClick={(e) => e.stopPropagation()}>
             <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden max-h-[60vh]">
               <Image
                 src={effectiveLightbox.url}

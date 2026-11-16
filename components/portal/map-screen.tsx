@@ -19,16 +19,19 @@ type ObservationPin = PortalObservation & { pos: [number, number] };
 export function MapScreen() {
   const { activeProject, observations } = useProject();
   const { boundary, hasCustomUpload, openInGoogleEarth } = useKmz();
-  const { currentStep } = useDemo();
+  const { sim } = useDemo();
   const mapRef = useRef<HTMLDivElement>(null);
   const leafletMap = useRef<L.Map | null>(null);
   const kmzLayer = useRef<L.LayerGroup | null>(null);
   const obsGroup = useRef<L.LayerGroup | null>(null);
 
-  const [selectedObs, setSelectedObs] = useState<ObservationPin | null>(null);
-  const [showKmz, setShowKmz] = useState(true);
+  const [pickedObs, setSelectedObs] = useState<ObservationPin | null>(null);
+  const [kmzToggle, setShowKmz] = useState(true);
   const [showObs, setShowObs] = useState(true);
   const [showLabels, setShowLabels] = useState(true);
+
+  // The guided tour can drive the layer chips and open a pin; otherwise the user's own choices apply.
+  const showKmz = sim.mapBoundary ?? kmzToggle;
 
   const observationPins = useMemo(() => {
     if (!boundary) return [];
@@ -42,11 +45,14 @@ export function MapScreen() {
     }));
   }, [observations, boundary]);
 
+  const selectedObs = sim.mapPinOpen ? (observationPins[0] ?? pickedObs) : pickedObs;
+
+  // The map shrinks when the detail card opens; let Leaflet re-measure so tiles don't glitch.
   useEffect(() => {
-    if (currentStep?.id === "map-3" && observationPins.length > 0 && !selectedObs) {
-      setSelectedObs(observationPins[0]);
-    }
-  }, [currentStep?.id, observationPins, selectedObs]);
+    if (!leafletMap.current) return;
+    const timer = window.setTimeout(() => leafletMap.current?.invalidateSize(), 60);
+    return () => window.clearTimeout(timer);
+  }, [selectedObs]);
 
   useEffect(() => {
     if (!boundary) return;
@@ -91,7 +97,7 @@ export function MapScreen() {
             : "#FF9500";
       const icon = L.divIcon({
         className: "",
-        html: `<div style="width:12px;height:12px;background:${color};border-radius:50%;border:2px solid rgba(255,255,255,0.8);box-shadow:0 0 8px ${color}aa;cursor:pointer"></div>`,
+        html: `<div ${obs.id === observationPins[0]?.id ? 'data-demo="map-pin-first"' : ""} style="width:12px;height:12px;background:${color};border-radius:50%;border:2px solid rgba(255,255,255,0.8);box-shadow:0 0 8px ${color}aa;cursor:pointer"></div>`,
         iconAnchor: [6, 6],
       });
       L.marker(obs.pos, { icon })
@@ -170,6 +176,7 @@ export function MapScreen() {
 
       <div className="px-4 mb-3 flex gap-2 flex-shrink-0 flex-wrap" data-demo="map-controls">
         <button
+          data-demo="map-toggle-boundary"
           onClick={() => setShowKmz((v) => !v)}
           disabled={!boundary}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
@@ -193,6 +200,7 @@ export function MapScreen() {
           </button>
         )}
         <button
+          data-demo="map-toggle-observations"
           onClick={() => setShowObs((v) => !v)}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
             showObs ? "bg-[#FF3B30]/10 border-[#FF3B30]/25 text-[#FF3B30]" : "bg-secondary border-white/8 text-white/35"

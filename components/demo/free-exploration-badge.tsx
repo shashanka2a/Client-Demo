@@ -1,35 +1,44 @@
 "use client";
 
 import { motion } from "framer-motion";
-import { Play } from "lucide-react";
-import { useDemo } from "@/contexts/demo-context";
+import { Play, RotateCcw } from "lucide-react";
+import { TOUR_MINUTES, useDemo } from "@/contexts/demo-context";
 
 export function FreeExplorationBadge() {
-  const { isWalkthroughRunning, startWalkthrough, currentStepIndex } = useDemo();
+  const { status, stepIndex, totalSteps, startWalkthrough } = useDemo();
 
-  if (isWalkthroughRunning) return null;
+  if (status === "running") return null;
+
+  // Where the viewer is in the tour decides what the button offers.
+  const finished = status === "complete";
+  const midway = !finished && stepIndex > 0;
+
+  const label = finished ? "Replay tour" : midway ? "Resume tour" : "Take the tour";
+  const hint = finished
+    ? "Explore freely, or watch it again"
+    : midway
+      ? `Step ${stepIndex + 1} of ${totalSteps}`
+      : `${totalSteps} quick steps · about ${TOUR_MINUTES} min`;
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.9, y: 10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      className="fixed bottom-20 lg:bottom-6 right-4 z-40"
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25, ease: "easeOut" }}
+      className="fixed bottom-[84px] right-4 z-40 lg:bottom-6 lg:right-6"
     >
-      <div className="bg-[#141414]/90 backdrop-blur-xl border border-[#FF6633]/30 rounded-2xl p-2.5 shadow-2xl shadow-black/80 flex items-center gap-3">
-        <div className="flex items-center gap-2 pl-2">
-          <div className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
-          <span className="text-xs font-bold text-white/90">
-            Interactive Demo
-          </span>
+      <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-[#141414]/90 p-2 pl-4 shadow-2xl shadow-black/70 backdrop-blur-xl">
+        <div className="hidden min-w-0 sm:block">
+          <p className="text-xs font-semibold text-white/90">Interactive demo</p>
+          <p className="text-[11px] text-white/45">{hint}</p>
         </div>
-
         <button
           type="button"
-          onClick={() => startWalkthrough(currentStepIndex >= 21)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FF6633] hover:bg-[#FF7A4D] text-white text-xs font-bold transition-all shadow-md shadow-[#FF6633]/20 active:scale-95"
+          onClick={() => startWalkthrough(finished || !midway)}
+          className="flex items-center gap-1.5 rounded-xl bg-[#FF6633] px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-[#FF6633]/20 transition-all hover:bg-[#FF7A4D] active:scale-95"
         >
-          <Play size={12} className="fill-white" />
-          <span>{currentStepIndex > 0 && currentStepIndex < 21 ? "Resume Tour" : "Start Guided Tour"}</span>
+          {finished ? <RotateCcw size={12} /> : <Play size={12} className="fill-white" />}
+          <span>{label}</span>
         </button>
       </div>
     </motion.div>

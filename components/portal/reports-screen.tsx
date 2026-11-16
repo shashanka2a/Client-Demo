@@ -213,7 +213,7 @@ const DATE_OPTIONS = [
 
 export function ReportsScreen() {
   const { projects } = useProject();
-  const { currentStep } = useDemo();
+  const { sim } = useDemo();
 
   const [dateFilter, setDateFilter] = useState<string>("Last 30 Days");
   const [selectedProject, setSelectedProject] = useState<string>("All Projects");
@@ -248,19 +248,14 @@ export function ReportsScreen() {
     setProjectDropdownOpen(false);
   }
 
+  // The guided tour can expand the first report, open its PDF, and download it.
   const effectiveExpandedId =
-    currentStep?.id === "reports-cards" || currentStep?.id === "reports-2"
-      ? filteredReports[0]?.id ?? null
-      : expandedId;
+    sim.reportExpanded && filteredReports[0] ? filteredReports[0].id : expandedId;
 
   const effectiveModalReport =
-    currentStep?.id === "reports-export" || currentStep?.id === "reports-3"
-      ? modalReport ?? INITIAL_REPORTS[0] ?? null
-      : modalReport;
+    sim.reportModal ? (modalReport ?? filteredReports[0] ?? null) : modalReport;
 
-  const isSimulatedDownload =
-    currentStep?.id === "reports-export" || currentStep?.id === "reports-3";
-  const isDownloaded = downloadSuccess || isSimulatedDownload;
+  const isDownloaded = downloadSuccess || sim.reportDownloaded;
 
   function handleDownload(report: DailyReportItem) {
     setDownloadSuccess(true);
@@ -459,7 +454,7 @@ export function ReportsScreen() {
                     )}
 
                     {/* Acres Completed (Bonus Solar Metric) */}
-                    {report.acresToday && report.acresToday > 0 && (
+                    {(report.acresToday ?? 0) > 0 && (
                       <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#FF6633]/10 border border-[#FF6633]/20 text-[10px] text-[#FF6633] font-mono font-medium">
                         +{report.acresToday} acres
                       </span>
@@ -471,6 +466,7 @@ export function ReportsScreen() {
                 <div className="flex items-center gap-2.5 flex-shrink-0 pt-1">
                   <button
                     type="button"
+                    data-demo={index === 0 ? "report-view-btn" : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       setModalReport(report);
@@ -483,6 +479,7 @@ export function ReportsScreen() {
 
                   <button
                     type="button"
+                    data-demo={index === 0 ? "report-expand-btn" : undefined}
                     onClick={(e) => {
                       e.stopPropagation();
                       setExpandedId((cur) => (cur === report.id ? null : report.id));
@@ -642,6 +639,7 @@ export function ReportsScreen() {
           onClick={() => setModalReport(null)}
         >
           <div
+            data-demo="report-modal"
             className="bg-[#141414] border border-white/14 rounded-2xl max-w-xl w-full max-h-[88vh] overflow-y-auto p-6 sm:p-7 shadow-2xl space-y-5"
             onClick={(e) => e.stopPropagation()}
           >

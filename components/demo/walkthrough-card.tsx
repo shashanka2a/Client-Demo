@@ -1,125 +1,269 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft,
-  ChevronRight,
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  Lightbulb,
   Pause,
   Play,
   RotateCcw,
   X,
 } from "lucide-react";
-import { useDemo } from "@/contexts/demo-context";
+import { DEMO_STEPS, useDemo, useDemoProgress } from "@/contexts/demo-context";
+import { useTrackedRect, type TrackedRect } from "@/components/demo/use-tracked-rect";
+
+type Dock = "bottom" | "top";
+
+const DESKTOP_MIN = 1024;
+const CARD_W = 392;
+const EDGE = 24;
+
+/** Where the card would sit for a given dock, so we can check it against the highlighted area. */
+function dockRect(dock: Dock, height: number): TrackedRect {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const desktop = vw >= DESKTOP_MIN;
+  const width = desktop ? CARD_W : vw - 32;
+  const left = desktop ? vw - EDGE - CARD_W : 16;
+  // Mobile has a 72px bottom nav the card has to clear.
+  const bottomGap = desktop ? EDGE : 84;
+  const top = dock === "bottom" ? vh - bottomGap - height : desktop ? EDGE : 12;
+  return { top, left, width, height };
+}
+
+function overlaps(a: TrackedRect, b: TrackedRect, pad = 12) {
+  return !(
+    a.left + a.width + pad < b.left ||
+    b.left + b.width + pad < a.left ||
+    a.top + a.height + pad < b.top ||
+    b.top + b.height + pad < a.top
+  );
+}
 
 export function WalkthroughCard() {
   const {
-    isWalkthroughRunning,
-    currentStep,
+    status,
+    step,
+    stepIndex,
+    totalSteps,
     isPaused,
-    progressPercent,
-    currentStepIndex,
+    spotlightSelector,
     pauseWalkthrough,
     resumeWalkthrough,
     nextStep,
     prevStep,
+    goToStep,
+    startWalkthrough,
     replayCurrentStep,
     exitWalkthrough,
   } = useDemo();
+  const progress = useDemoProgress();
 
-  if (!isWalkthroughRunning) return null;
+  const visible = status !== "idle";
+  const complete = status === "complete";
+  const isLast = stepIndex === totalSteps - 1;
+
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [dock, setDock] = useState<Dock>("bottom");
+  const focusRect = useTrackedRect(visible && !complete ? spotlightSelector : null);
+
+  // Keep the card out of the way: if it would cover what we're highlighting, move it to the other edge.
+  useEffect(() => {
+    if (!visible || !focusRect || !cardRef.current) return;
+    const height = cardRef.current.offsetHeight;
+    const here = dockRect(dock, height);
+    if (!overlaps(here, focusRect)) return;
+    const other: Dock = dock === "bottom" ? "top" : "bottom";
+    if (!overlaps(dockRect(other, height), focusRect)) setDock(other);
+  }, [visible, focusRect, dock, step.id, complete]);
+
+  // Keyboard: ← / → to move, Esc to leave. Never steal keys from form fields.
+  useEffect(() => {
+    if (!visible) return;
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) {
+        return;
+      }
+      if (e.key === "ArrowRight" && !complete) nextStep();
+      else if (e.key === "ArrowLeft") prevStep();
+      else if (e.key === "Escape") exitWalkthrough();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [visible, complete, nextStep, prevStep, exitWalkthrough]);
+
+  if (!visible) return null;
+
+  const position =
+    dock === "bottom"
+      ? "bottom-[84px] lg:bottom-6 lg:top-auto"
+      : "top-3 lg:top-6 bottom-auto";
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={currentStep.id}
-        initial={{ opacity: 0, y: 16, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 12, scale: 0.98 }}
-        transition={{ duration: 0.25, ease: "easeOut" }}
-        className="fixed bottom-20 lg:bottom-6 left-4 right-4 lg:left-auto lg:right-6 lg:w-[380px] z-50 pointer-events-auto"
-      >
-        <div className="bg-[#141414]/95 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/80 ring-1 ring-white/5">
-          {/* Header: Section Eyebrow + Window Controls */}
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] font-bold tracking-wider uppercase text-[#FF6633]">
-                {currentStep.workflowTitle}
-              </span>
-              <span className="text-[10px] font-mono text-white/35">
-                · {currentStep.stepNumber} of {currentStep.totalStepsInWorkflow}
-              </span>
-            </div>
-
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={replayCurrentStep}
-                title="Replay step"
-                className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center text-white/40 hover:text-white transition-colors"
-              >
-                <RotateCcw size={12} />
-              </button>
-              <button
-                type="button"
-                onClick={exitWalkthrough}
-                title="Exit walkthrough"
-                className="w-6 h-6 rounded-md hover:bg-white/10 flex items-center justify-center text-white/40 hover:text-white transition-colors"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-
-          {/* Title & Human Description */}
-          <h3 className="text-sm font-semibold text-white leading-snug mb-1">
-            {currentStep.title}
-          </h3>
-          <p className="text-xs text-white/65 leading-relaxed mb-3">
-            {currentStep.description}
-          </p>
-
-          {/* Progress Bar */}
-          <div className="relative w-full h-1 bg-white/10 rounded-full overflow-hidden mb-3">
+    <motion.div
+      ref={cardRef}
+      layout="position"
+      transition={{ type: "spring", damping: 32, stiffness: 320 }}
+      role="dialog"
+      aria-label="Guided tour"
+      aria-live="polite"
+      className={`fixed left-4 right-4 z-[110] pointer-events-auto lg:left-auto lg:right-6 lg:w-[392px] ${position}`}
+    >
+      <div className="rounded-2xl border border-white/10 bg-[#141414]/95 p-4 shadow-2xl shadow-black/80 ring-1 ring-white/5 backdrop-blur-xl">
+        <AnimatePresence mode="wait" initial>
+          {complete ? (
             <motion.div
-              className="absolute left-0 top-0 bottom-0 bg-[#FF6633]"
-              style={{ width: `${progressPercent}%` }}
-              transition={{ ease: "linear" }}
-            />
-          </div>
-
-          {/* Controls Footer */}
-          <div className="flex items-center justify-between pt-0.5">
-            <button
-              type="button"
-              onClick={isPaused ? resumeWalkthrough : pauseWalkthrough}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-xs font-medium transition-colors"
+              key="complete"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
             >
-              {isPaused ? <Play size={11} className="fill-white" /> : <Pause size={11} className="fill-white" />}
-              <span>{isPaused ? "Resume" : "Pause"}</span>
-            </button>
+              <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-[#34C759]/15 ring-1 ring-[#34C759]/30">
+                <CheckCircle2 size={22} className="text-[#34C759]" />
+              </div>
+              <h3 className="mb-1 text-base font-semibold text-white">You&apos;re all set</h3>
+              <p className="mb-4 text-[13px] leading-relaxed text-white/65">
+                That&apos;s the whole portal. Now try it yourself: switch sites, filter photos, or open
+                a report.
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => startWalkthrough(true)}
+                  className="flex items-center gap-1.5 rounded-xl bg-white/6 px-3 py-2 text-xs font-semibold text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <RotateCcw size={13} />
+                  Replay tour
+                </button>
+                <button
+                  type="button"
+                  onClick={exitWalkthrough}
+                  className="ml-auto flex items-center gap-1.5 rounded-xl bg-[#FF6633] px-4 py-2 text-xs font-bold text-white shadow-sm transition-all hover:bg-[#FF7A4D] active:scale-95"
+                >
+                  Explore on my own
+                  <ArrowRight size={13} />
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key={step.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.2 }}
+            >
+              {/* Progress: one segment per step, click to jump */}
+              <div className="mb-3 flex items-center gap-1" role="tablist" aria-label="Tour steps">
+                {DEMO_STEPS.map((s, i) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={i === stepIndex}
+                    aria-label={`Step ${i + 1}: ${s.title}`}
+                    title={s.title}
+                    onClick={() => goToStep(i)}
+                    className="group flex-1 py-1.5"
+                  >
+                    <span className="relative block h-1 overflow-hidden rounded-full bg-white/10 transition-colors group-hover:bg-white/20">
+                      <span
+                        className="absolute inset-y-0 left-0 rounded-full bg-[#FF6633]"
+                        style={{
+                          width: `${i < stepIndex ? 100 : i === stepIndex ? progress * 100 : 0}%`,
+                          transition: i === stepIndex ? "width 80ms linear" : "width 200ms ease-out",
+                        }}
+                      />
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={prevStep}
-                disabled={currentStepIndex === 0}
-                className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-25 disabled:cursor-not-allowed flex items-center justify-center text-white transition-colors"
-                title="Previous step"
-              >
-                <ChevronLeft size={15} />
-              </button>
-              <button
-                type="button"
-                onClick={nextStep}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#FF6633] hover:bg-[#FF7A4D] text-white text-xs font-semibold transition-all shadow-sm active:scale-95"
-              >
-                <span>{currentStepIndex === 21 ? "Finish" : "Next"}</span>
-                <ChevronRight size={13} />
-              </button>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-    </AnimatePresence>
+              {/* Eyebrow + utility actions */}
+              <div className="mb-1.5 flex items-center justify-between gap-2">
+                <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider">
+                  <span className="text-[#FF6633]">{step.section}</span>
+                  <span className="font-mono normal-case tracking-normal text-white/35">
+                    {stepIndex + 1} / {totalSteps}
+                  </span>
+                  {isPaused && (
+                    <span className="rounded bg-white/10 px-1.5 py-0.5 text-[9px] text-white/60">
+                      Paused
+                    </span>
+                  )}
+                </p>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={replayCurrentStep}
+                    title="Replay this step"
+                    aria-label="Replay this step"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    <RotateCcw size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exitWalkthrough}
+                    title="Close tour (Esc)"
+                    aria-label="Close tour"
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              </div>
+
+              <h3 className="mb-1.5 text-[15px] font-semibold leading-snug text-white">
+                {step.title}
+              </h3>
+              <p className="mb-3 text-[13px] leading-relaxed text-white/70">{step.description}</p>
+
+              <div className="mb-4 flex items-start gap-2 rounded-xl bg-white/[0.04] px-3 py-2">
+                <Lightbulb size={13} className="mt-0.5 flex-shrink-0 text-[#FF6633]" />
+                <p className="text-xs leading-relaxed text-white/60">{step.benefit}</p>
+              </div>
+
+              {/* Controls */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={prevStep}
+                  disabled={stepIndex === 0}
+                  title="Back (←)"
+                  aria-label="Previous step"
+                  className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-white transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-25"
+                >
+                  <ArrowLeft size={15} />
+                </button>
+                <button
+                  type="button"
+                  onClick={isPaused ? resumeWalkthrough : pauseWalkthrough}
+                  title={isPaused ? "Resume" : "Pause"}
+                  aria-label={isPaused ? "Resume tour" : "Pause tour"}
+                  className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/5 text-white/80 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  {isPaused ? <Play size={14} className="fill-current" /> : <Pause size={14} className="fill-current" />}
+                </button>
+                <button
+                  type="button"
+                  onClick={nextStep}
+                  title="Next (→)"
+                  className="ml-auto flex h-9 items-center gap-1.5 rounded-xl bg-[#FF6633] px-4 text-xs font-bold text-white shadow-sm transition-all hover:bg-[#FF7A4D] active:scale-95"
+                >
+                  {isLast ? "Finish" : "Next"}
+                  <ArrowRight size={14} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </motion.div>
   );
 }

@@ -19,19 +19,14 @@ const CHIP_ORDER = [
 
 export function GalleryScreen() {
   const { photos, activeProject } = useProject();
-  const { currentStep, simulatedSearch, simulatedModalOpen } = useDemo();
+  const { sim } = useDemo();
   const [activeFilter, setActiveFilter] = useState("All");
   const [search, setSearch] = useState("");
   const [lightbox, setLightbox] = useState<PortalPhoto | null>(null);
 
-  const effectiveFilter =
-    currentStep?.id === "gallery-categories" || currentStep?.id === "gallery-2"
-      ? "Progress"
-      : activeFilter;
-  const effectiveSearch =
-    (currentStep?.id === "gallery-search" || currentStep?.id === "gallery-3") && simulatedSearch
-      ? simulatedSearch
-      : search;
+  // The guided tour can drive the filter, the search box and the photo viewer.
+  const effectiveFilter = sim.galleryFilter ?? activeFilter;
+  const effectiveSearch = sim.gallerySearch ?? search;
 
   const chips = useMemo(() => {
     const categories = new Set(photos.map((photo) => photo.category));
@@ -51,10 +46,7 @@ export function GalleryScreen() {
     return matchesFilter && matchesSearch;
   });
 
-  const effectiveLightbox =
-    (currentStep?.id === "gallery-lightbox" || currentStep?.id === "gallery-4") && simulatedModalOpen
-      ? filtered[0] ?? photos[0] ?? null
-      : lightbox;
+  const effectiveLightbox = sim.galleryLightbox ? (filtered[0] ?? lightbox) : lightbox;
 
   if (!activeProject) return null;
 
@@ -86,6 +78,7 @@ export function GalleryScreen() {
         {chips.map((chip) => (
           <button
             key={chip}
+            data-demo={`gallery-chip-${chip}`}
             onClick={() => setActiveFilter(chip)}
             className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 ${
               effectiveFilter === chip
@@ -141,12 +134,13 @@ export function GalleryScreen() {
           onClick={() => setLightbox(null)}
         >
           <button
+            data-demo="lightbox-close"
             className="absolute top-5 right-5 w-10 h-10 rounded-full bg-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-colors z-10"
             onClick={() => setLightbox(null)}
           >
             <X size={18} />
           </button>
-          <div className="max-w-lg w-full" onClick={(e) => e.stopPropagation()}>
+          <div className="max-w-lg w-full" data-demo="lightbox" onClick={(e) => e.stopPropagation()}>
             <div className="relative w-full aspect-[4/3] rounded-2xl overflow-hidden max-h-[60vh]">
               <Image
                 src={effectiveLightbox.src}

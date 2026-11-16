@@ -1,139 +1,78 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useDemo } from "@/contexts/demo-context";
+import { useEnsureVisible, useTrackedRect } from "@/components/demo/use-tracked-rect";
 
-type TargetRect = {
-  top: number;
-  left: number;
-  width: number;
-  height: number;
-};
+const PAD = 8;
+const RADIUS = 16;
+const SPRING = { type: "spring", damping: 30, stiffness: 260, mass: 0.8 } as const;
 
 export function SpotlightOverlay() {
-  const { isWalkthroughRunning, currentStep } = useDemo();
-  const [targetRect, setTargetRect] = useState<TargetRect | null>(null);
+  const { isWalkthroughRunning, spotlightSelector } = useDemo();
+  const rect = useTrackedRect(isWalkthroughRunning ? spotlightSelector : null);
+  useEnsureVisible(isWalkthroughRunning ? spotlightSelector : null, rect);
 
-  const updateRect = useCallback(() => {
-    if (!isWalkthroughRunning || !currentStep?.targetSelector) {
-      setTargetRect(null);
-      return;
-    }
-
-    const el = document.querySelector(currentStep.targetSelector);
-    if (!el) {
-      setTargetRect(null);
-      return;
-    }
-
-    // Scroll element into view if offscreen
-    const rawRect = el.getBoundingClientRect();
-    const isOffscreen =
-      rawRect.top < 0 ||
-      rawRect.bottom > window.innerHeight ||
-      rawRect.left < 0 ||
-      rawRect.right > window.innerWidth;
-
-    if (isOffscreen && typeof el.scrollIntoView === "function") {
-      el.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-    }
-
-    const rect = el.getBoundingClientRect();
-    setTargetRect({
-      top: Math.max(0, rect.top),
-      left: Math.max(0, rect.left),
-      width: rect.width,
-      height: rect.height,
-    });
-  }, [isWalkthroughRunning, currentStep?.targetSelector]);
-
-  useEffect(() => {
-    updateRect();
-
-    // Check again after page render / transitions
-    const t1 = setTimeout(updateRect, 100);
-    const t2 = setTimeout(updateRect, 300);
-    const t3 = setTimeout(updateRect, 600);
-
-    window.addEventListener("resize", updateRect);
-    window.addEventListener("scroll", updateRect, true);
-
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-      window.removeEventListener("resize", updateRect);
-      window.removeEventListener("scroll", updateRect, true);
-    };
-  }, [updateRect, currentStep?.id]);
-
-  if (!isWalkthroughRunning) return null;
-
-  const pad = 6;
-  const rx = 14;
+  const hole = rect
+    ? {
+        x: Math.max(0, rect.left - PAD),
+        y: Math.max(0, rect.top - PAD),
+        width: rect.width + PAD * 2,
+        height: rect.height + PAD * 2,
+      }
+    : null;
 
   return (
     <AnimatePresence>
-      <motion.div
-        key="spotlight-container"
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        exit={{ opacity: 0 }}
-        transition={{ duration: 0.3 }}
-        className="fixed inset-0 pointer-events-none z-30"
-      >
-        {targetRect ? (
-          <>
-            {/* SVG mask creating a true cutout hole over target element */}
-            <svg className="absolute inset-0 w-full h-full">
-              <defs>
-                <mask id="spotlight-cutout">
-                  {/* Fill entire canvas with white */}
-                  <rect width="100%" height="100%" fill="white" />
-                  {/* Cutout hole is black */}
-                  <rect
-                    x={targetRect.left - pad}
-                    y={targetRect.top - pad}
-                    width={targetRect.width + pad * 2}
-                    height={targetRect.height + pad * 2}
-                    rx={rx}
-                    ry={rx}
-                    fill="black"
-                  />
-                </mask>
-              </defs>
-              {/* Dimmed backdrop through mask */}
-              <rect
-                width="100%"
-                height="100%"
-                fill="rgba(0, 0, 0, 0.45)"
-                mask="url(#spotlight-cutout)"
-              />
-            </svg>
+      {isWalkthroughRunning && (
+        // Sits above modals (z-100) so the highlight still works when the tour opens one.
+        <motion.div
+          key="spotlight"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.3 }}
+          className="fixed inset-0 z-[105] pointer-events-none"
+          aria-hidden
+        >
+          {hole ? (
+            <>
+              <svg className="absolute inset-0 h-full w-full">
+                <defs>
+                  <mask id="demo-spotlight-mask">
+                    <rect width="100%" height="100%" fill="white" />
+                    <motion.rect
+                      rx={RADIUS}
+                      ry={RADIUS}
+                      fill="black"
+                      initial={false}
+                      animate={hole}
+                      transition={SPRING}
+                    />
+                  </mask>
+                </defs>
+                <rect
+                  width="100%"
+                  height="100%"
+                  fill="rgba(0, 0, 0, 0.55)"
+                  mask="url(#demo-spotlight-mask)"
+                />
+              </svg>
 
-            {/* Precision highlight ring with subtle orange accent glow */}
-            <motion.div
-              layout
-              transition={{
-                type: "spring",
-                damping: 28,
-                stiffness: 240,
-              }}
-              style={{
-                top: targetRect.top - pad,
-                left: targetRect.left - pad,
-                width: targetRect.width + pad * 2,
-                height: targetRect.height + pad * 2,
-              }}
-              className="absolute rounded-2xl border-2 border-[#FF6633] shadow-[0_0_20px_rgba(255,102,51,0.35)] ring-2 ring-[#FF6633]/20 pointer-events-none"
-            />
-          </>
-        ) : (
-          /* Subtle ambient dim when no target selector */
-          <div className="absolute inset-0 bg-black/25 transition-opacity" />
-        )}
-      </motion.div>
+              <motion.div
+                initial={false}
+                animate={{ left: hole.x, top: hole.y, width: hole.width, height: hole.height }}
+                transition={SPRING}
+                style={{ borderRadius: RADIUS }}
+                className="demo-ring absolute border-2 border-[#FF6633]"
+              />
+            </>
+          ) : (
+            // No target on screen yet (e.g. mid page-change): keep the mood steady.
+            <div className="absolute inset-0 bg-black/40" />
+          )}
+        </motion.div>
+      )}
     </AnimatePresence>
   );
 }
